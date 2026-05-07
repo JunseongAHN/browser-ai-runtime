@@ -177,7 +177,7 @@ export default function MobileNetRuntimeDemoView() {
   return (
     <main style={pageStyle}>
       <header style={{ marginBottom: 24 }}>
-        <h1 style={{ marginBottom: 8 }}>ONNX Edge Runtime Benchmark</h1>
+        <h1 style={{ marginBottom: 24 }}>ONNX Edge Runtime Benchmark</h1>
 
         <p style={{ color: '#555', maxWidth: 760, lineHeight: 1.5 }}>
           Browser-based ONNX inference benchmark for lightweight edge AI models
