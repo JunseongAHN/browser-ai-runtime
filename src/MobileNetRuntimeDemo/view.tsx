@@ -181,8 +181,6 @@ export default function View() {
         fontFamily: 'system-ui',
       }}
     >
-      <a href="/">← Back</a>
-
       <header style={{ textAlign: 'center', marginBottom: 24 }}>
         <h1>Browser-Native AI Runtime</h1>
         <p>
