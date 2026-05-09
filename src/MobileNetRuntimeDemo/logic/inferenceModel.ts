@@ -1,182 +1,84 @@
-import * as ort from "onnxruntime-web";
+import * as ort from 'onnxruntime-web';
+import { preprocess } from './preprocess';
+import { parseImagenetClasses } from './parseImagenetClasses';
+import { postprocess, type Prediction } from './postprocess';
 
-export type Backend = "wasm" | "webgpu";
+export type { Prediction };
+export const MODEL_INPUT_WIDTH = 224;
+export const MODEL_INPUT_HEIGHT = 224;
 
-export interface CreateMobileNetModelOptions {
-  modelPath: string;
-  labelPath: string;
-  backend: Backend;
-  inputWidth?: number;
-  inputHeight?: number;
-}
+export type Backend = 'wasm' | 'webgpu';
 
-export interface Prediction {
-  index: number;
-  label: string;
-  score: number;
-}
-
-export interface MobileNetInferenceResult {
-  latencyMs: number;
+export type InferenceResult = {
   topPrediction: Prediction;
   topPredictions: Prediction[];
-  rawOutput: ort.Tensor;
-}
+};
 
-export interface MobileNetModel {
-  backend: Backend;
-  loadTimeMs: number;
-  session: ort.InferenceSession;
-  inference: (file: File) => Promise<MobileNetInferenceResult>;
-}
+let session: ort.InferenceSession | null = null;
+let labels: string[] | null = null;
+let currentBackend: Backend | null = null;
 
-async function loadLabels(labelPath: string): Promise<string[]> {
-  const response = await fetch(labelPath);
+export async function initializeModel(backend: Backend): Promise<void> {
+  if (session && currentBackend === backend) return;
 
-  if (!response.ok) {
-    throw new Error(`Failed to load labels from ${labelPath}`);
-  }
+  currentBackend = backend;
 
-  const text = await response.text();
+  const baseUrl = import.meta.env.BASE_URL;
 
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-export async function createMobileNetModel({
-  modelPath,
-  labelPath,
-  backend,
-  inputWidth = 224,
-  inputHeight = 224,
-}: CreateMobileNetModelOptions): Promise<MobileNetModel> {
-  const loadStart = performance.now();
-
-
-  const executionProviders =
-  backend === "webgpu"
-    ? ["webgpu", "wasm"]
-    : ["wasm"];
-
-  const [session, labels] = await Promise.all([
-    ort.InferenceSession.create(modelPath, {
-      executionProviders: executionProviders,
-    }),
-    loadLabels(labelPath),
-  ]);
-
-  const loadTimeMs = performance.now() - loadStart;
-
-  async function preprocess(file: File): Promise<ort.Tensor> {
-    const bitmap = await createImageBitmap(file);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = inputWidth;
-    canvas.height = inputHeight;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Failed to create canvas context");
+  session = await ort.InferenceSession.create(
+    `${baseUrl}models/mobilenetv2-7.onnx`,
+    {
+      executionProviders: backend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'],
     }
+  );
 
-    ctx.drawImage(bitmap, 0, 0, inputWidth, inputHeight);
+  labels = await parseImagenetClasses(`${baseUrl}models/imagenet_classes.txt`);
+}
 
-    const imageData = ctx.getImageData(0, 0, inputWidth, inputHeight).data;
-    const floatData = new Float32Array(1 * 3 * inputWidth * inputHeight);
+export async function runInference(file: File): Promise<InferenceResult> {
+  if (!session) throw new Error('Model is not initialized');
+  if (!labels) throw new Error('ImageNet labels are not loaded');
 
-    for (let i = 0; i < inputWidth * inputHeight; i++) {
-      const r = imageData[i * 4] / 255;
-      const g = imageData[i * 4 + 1] / 255;
-      const b = imageData[i * 4 + 2] / 255;
+  const input = await preprocess(file);
 
-      floatData[i] = r;
-      floatData[inputWidth * inputHeight + i] = g;
-      floatData[2 * inputWidth * inputHeight + i] = b;
-    }
+  const outputs = await session.run({
+    [session.inputNames[0]]: input,
+  });
 
-    return new ort.Tensor("float32", floatData, [
-      1,
-      3,
-      inputHeight,
-      inputWidth,
-    ]);
-  }
+  const output = outputs[session.outputNames[0]].data as Float32Array;
 
-  async function forward(inputTensor: ort.Tensor): Promise<ort.Tensor> {
-    const inputName = session.inputNames[0];
-    const outputName = session.outputNames[0];
+  return postprocess(output, labels);
+}
 
-    const outputs = await session.run({
-      [inputName]: inputTensor,
+export async function benchmarkInferenceOnly(file: File, durationMs = 10_000) {
+  if (!session) throw new Error('Model is not initialized');
+
+  const input = await preprocess(file);
+  const inputName = session.inputNames[0];
+
+  const times: number[] = [];
+  const start = performance.now();
+
+  while (performance.now() - start < durationMs) {
+    const t0 = performance.now();
+
+    await session.run({
+      [inputName]: input,
     });
 
-    const output = outputs[outputName];
-
-    if (!(output instanceof ort.Tensor)) {
-      throw new Error("Model output is not an ONNX tensor");
-    }
-
-    return output;
+    times.push(performance.now() - t0);
   }
 
-  function softmax(values: Float32Array): number[] {
-    const maxValue = Math.max(...values);
-    const exps = Array.from(values, (value) => Math.exp(value - maxValue));
-    const sum = exps.reduce((acc, value) => acc + value, 0);
-
-    return exps.map((value) => value / sum);
-  }
-
-  function postprocess(output: ort.Tensor): {
-    topPrediction: Prediction;
-    topPredictions: Prediction[];
-  } {
-    const data = output.data;
-
-    if (!(data instanceof Float32Array)) {
-      throw new Error("Expected Float32Array output");
-    }
-
-    const probabilities = softmax(data);
-
-    const topPredictions = probabilities
-      .map((score, index) => ({
-        index,
-        label: labels[index] ?? `Class ${index}`,
-        score,
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    return {
-      topPrediction: topPredictions[0],
-      topPredictions,
-    };
-  }
-
-  async function inference(file: File): Promise<MobileNetInferenceResult> {
-    const inputTensor = await preprocess(file);
-
-    const start = performance.now();
-    const output = await forward(inputTensor);
-    const latencyMs = performance.now() - start;
-
-    const { topPrediction, topPredictions } = postprocess(output);
-
-    return {
-      latencyMs,
-      topPrediction,
-      topPredictions,
-      rawOutput: output,
-    };
-  }
+  const totalMs = performance.now() - start;
+  const sum = times.reduce((a, b) => a + b, 0);
 
   return {
-    backend,
-    loadTimeMs,
-    session,
-    inference,
+    backend: currentBackend ?? 'unknown',
+    runs: times.length,
+    durationMs: totalMs,
+    fps: times.length / (totalMs / 1000),
+    avgInferenceMs: sum / times.length,
+    minInferenceMs: Math.min(...times),
+    maxInferenceMs: Math.max(...times),
   };
 }
