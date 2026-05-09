@@ -184,7 +184,7 @@ export default function View() {
       <a href="/">← Back</a>
 
       <header style={{ textAlign: 'center', marginBottom: 24 }}>
-        <h1>Browser-Native AI Runtime MVP</h1>
+        <h1>Browser-Native AI Runtime</h1>
         <p>
           Deployable browser-side AI inference with ONNX Runtime Web,
           WASM/WebGPU backend switching, and cross-device benchmarking.
