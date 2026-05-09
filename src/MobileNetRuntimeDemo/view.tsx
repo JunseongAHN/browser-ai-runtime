@@ -179,9 +179,11 @@ export default function MobileNetRuntimeDemoView() {
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ marginBottom: 24 }}>ONNX Edge Runtime Benchmark</h1>
 
-        <p style={{ color: '#555', maxWidth: 760, lineHeight: 1.5 }}>
-          Browser-based ONNX inference benchmark for lightweight edge AI models
-          using WASM and WebGPU backends.
+      <header style={{ textAlign: 'center', marginBottom: 24 }}>
+        <h1>Browser-Native AI Runtime MVP</h1>
+        <p>
+          Deployable browser-side AI inference with ONNX Runtime Web,
+          WASM/WebGPU backend switching, and cross-device benchmarking.
         </p>
       </header>
 
